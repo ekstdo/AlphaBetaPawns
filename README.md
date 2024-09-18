@@ -5,7 +5,7 @@ and no King. So the goal was to capture all the pawns (similiar to the Horde
 mode). Due to the simplicity of the modified version, this project just
 tries to write an alpha beta pruning algorithm for the modified chess game.
 
-== Usage
+## Usage
 
 Currently there isn't any UI, but you can use the REPL to try things. Note
 that due to most environments being in dark mode, the black pieces might look
