@@ -36,3 +36,9 @@ ghci> evaluate board3 1 Black
 ─┼─┼─┼─┼─┼─┼─┼─
  │ │ │ │ │ │ │ )
 ```
+
+## TODO:
+
+- [x] Promoting pawns
+- [ ] En passant
+- [ ] Some UI
