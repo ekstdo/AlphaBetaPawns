@@ -146,24 +146,26 @@ possibleMoves b player = snd <$> (sortOn (Down . fst) $ Map.foldrWithKey (\a b c
 maxBy1 x y = if fst x >= fst y then x else y
 minBy1 x y = if fst x >= fst y then y else x
 
-alphaBeta :: Board -> Int -> Float -> Float -> Bool -> (Float, Maybe Board)
-alphaBeta board depth ɑ β maximizingPlayer = if depth == 0 then (heuristicScore board, Nothing)
-  else maybe (runFun (possibleMoves board player)) (\x -> (playerToScore x, Just board)) $ isTerminal board
+alphaBeta :: Board -> Int -> Float -> Float -> Bool -> (Float, [Board])
+alphaBeta board depth ɑ β maximizingPlayer = if depth == 0 then (heuristicScore board, [])
+  else maybe (runFun (possibleMoves board player)) (\x -> (playerToScore x, [board])) $ isTerminal board
   where player = if maximizingPlayer then White else Black
-        maxFun :: [Board] -> (Float, Maybe Board) -> Float -> (Float, Maybe Board)
+        maxFun :: [Board] -> (Float, [Board]) -> Float -> (Float, [Board])
         maxFun [] val newAlpha = val
         maxFun (x:xs) val ɑ
           | fst newVal >= β = newVal
           | otherwise = maxFun xs newVal (max ɑ $ fst newVal)
-          where newVal = maxBy1 val $ (fst $ alphaBeta x (depth - 1) ɑ β False, Just x)
+          where newVal = maxBy1 val $ (fst res, x : snd res)
+                res = alphaBeta x (depth - 1) ɑ β False
 
-        minFun :: [Board] -> (Float, Maybe Board) -> Float -> (Float, Maybe Board)
+        minFun :: [Board] -> (Float, [Board]) -> Float -> (Float, [Board])
         minFun [] val newBeta = val
         minFun (x:xs) val β
           | fst newVal <= ɑ = newVal
           | otherwise = minFun xs newVal (min β $ fst newVal)
-          where newVal = minBy1 val $ (fst $ alphaBeta x (depth - 1) ɑ β True, Just x)
-        runFun x = if maximizingPlayer then maxFun x (-infinity, Nothing) ɑ else minFun x (infinity, Nothing) β 
+          where newVal = minBy1 val $ (fst res, x : snd res)
+                res = alphaBeta x (depth - 1) ɑ β True
+        runFun x = if maximizingPlayer then maxFun x (-infinity, []) ɑ else minFun x (infinity, []) β 
 
 evaluate board depth player = alphaBeta board depth (-infinity) infinity (player == White)
 
