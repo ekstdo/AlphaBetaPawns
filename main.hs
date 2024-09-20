@@ -177,6 +177,3 @@ board4 = Board { numWhite = 2, numBlack = 2, boardSize = (8, 8), board = Map.fro
 board5 = Board { numWhite = 1, numBlack = 1, boardSize = (8, 8), board = Map.fromList [((1, 6), Piece White Pawn), ((1, 1), Piece Black Pawn)] }
 
 main = putStrLn "hi"
-
-list = [1, 2]
-[a, b, c] = list
