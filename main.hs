@@ -47,14 +47,16 @@ data Board = Board { board     :: Map Pos Piece
              , numWhite  :: Int -- number of pieces in their respective color
              , numBlack  :: Int
              , boardSize :: (Int, Int)
+             , enPassantable :: Maybe Pos
              } deriving (Eq)
 
 instance Show Board where
-  show board = "Board " ++ show (boardSize board) ++ " " ++ show (numWhite board) ++ " vs. " ++ show (numBlack board) ++ "\n" ++ intercalate ("\n" ++ rowSeparator ++ "\n") (showRow <$> reverse [0..height- 1])
-          where showRow row = intercalate "│" $ (\i -> maybe " " show $ accessPos (i, row) board) <$> [0..width- 1]
+  show b = "Board " ++ show (boardSize b) ++ " " ++ show (numWhite b) ++ " vs. " ++ show (numBlack b) ++ ", outside: " ++ show outsidePieces ++ "en passantable: " ++ show (enPassantable b) ++ "\n" ++ intercalate ("\n" ++ rowSeparator ++ "\n") (showRow <$> reverse [0..height- 1])
+          where showRow row = intercalate "│" $ (\i -> maybe " " show $ accessPos (i, row) b) <$> [0..width- 1]
                 rowSeparator = intercalate "┼" $ replicate width "─"
-                width  = fst $ boardSize board
-                height = snd $ boardSize board
+                width  = fst $ boardSize b
+                height = snd $ boardSize b
+                outsidePieces = Map.filterWithKey (\x _ -> outsideBoard x b) (board b)
 
 accessPos :: Pos -> Board -> Maybe Piece
 accessPos x y = Map.lookup x (board y)
@@ -76,25 +78,29 @@ heuristicScore b = case isTerminal b of
   Nothing -> Map.foldr (\a accum -> accum + scorePiece a) 0 (board b)
 
 moveUncheckedPiece :: Maybe Piece -> Pos -> Pos -> Board -> Board
-moveUncheckedPiece piece from_ to_ b = Board {
-    board = newBoard,
-    numWhite = newNumWhite,
-    numBlack = newNumBlack,
-    boardSize = boardSize b
-  } where b_ = board b
-          taken = Map.lookup to_ b_ -- if "to" contains something, it gets taken
-          (newNumWhite, newNumBlack) = case taken of 
-            Just (Piece White _) -> (numWhite b - 1, numBlack b)
-            Just (Piece Black _) -> (numWhite b, numBlack b - 1)
-            Nothing         -> (numWhite b, numBlack b)
-          deleted = Map.delete from_ b_
-          newBoard = maybe deleted (\piece -> Map.insert to_ piece deleted) piece
+moveUncheckedPiece piece from_ to_ b =
+    Board { board = newBoard
+       , numWhite = newNumWhite
+       , numBlack = newNumBlack
+       , boardSize = boardSize b
+       , enPassantable = Nothing
+       }  where b_ = board b
+                taken = Map.lookup to_ b_ -- if "to" contains something, it gets taken
+                (newNumWhite, newNumBlack) = case taken of 
+                  Just (Piece White _) -> (numWhite b - 1, numBlack b)
+                  Just (Piece Black _) -> (numWhite b, numBlack b - 1)
+                  Nothing         -> (numWhite b, numBlack b)
+                deleted = Map.delete from_ b_
+                newBoard = maybe deleted (\piece -> Map.insert to_ piece deleted) piece
 
 moveUnchecked :: Pos -> Pos -> Board -> Board
 moveUnchecked from_ to_ b = moveUncheckedPiece (Map.lookup from_ $ board b) from_ to_ b
 
 promotePawn :: Player -> Pos -> Pos -> Board -> Board
-promotePawn player from_ to_ b = moveUncheckedPiece (Just $ Piece player Queen) from_ to_ b
+promotePawn player = moveUncheckedPiece (Just $ Piece player Queen)
+
+removePiece :: Pos -> Board -> Board
+removePiece pos = moveUncheckedPiece Nothing pos pos
 
 applyTuple :: (a -> b -> c) -> (a, a) -> (b, b) -> (c, c)
 applyTuple f a = bimap (f $ fst a) (f $ snd a)
@@ -122,8 +128,14 @@ maybeAdd :: Maybe a -> [a] -> [a]
 maybeAdd Nothing = id
 maybeAdd (Just x) = (x:)
 
+canTake :: Board -> Piece -> Pos -> Bool
+canTake b piece pos = (pieceColor <$> accessPos pos b) == Just (otherColor $ pieceColor piece)
+
+freeSquare :: Board -> Pos -> Bool
+freeSquare b p = isNothing (accessPos p b)
+
 possiblePawnMoves :: Pos -> Piece -> Board -> [(Int, Board)]
-possiblePawnMoves pos piece b = a1 ++ takingBoards
+possiblePawnMoves pos piece b = movingForward ++ takingBoards
   where y = snd pos
         height = snd $ boardSize b
         (canMoveTwice, isPromote1, isPromote2, direction) = if isWhite piece then (y < 2, y == height - 2, y == height - 3, 1) else (y > height - 3, y == 1, y == 2, -1)
@@ -131,15 +143,21 @@ possiblePawnMoves pos piece b = a1 ++ takingBoards
         pos2 = addPos (0, 2 * direction) pos
         pos3 = addPos (1, direction) pos
         pos4 = addPos (-1, direction) pos
-        a1 = if isNothing (accessPos pos1 b) && insideBoard pos1 b then
-                (if isNothing (accessPos pos2 b) && canMoveTwice && insideBoard pos2 b then
-                  [if isPromote2 then (promotePriority, promotePawn (pieceColor piece) pos pos2 b) else (fastPriority, moveUnchecked pos pos2 b)]
-                else []) ++ [if isPromote1 then (promotePriority, promotePawn (pieceColor piece) pos pos1 b) else (defaultPriority, moveUnchecked pos pos1 b)]
-              else []
-        takingBoards = [if isPromote1 then (takePriority + promotePriority, promotePawn (pieceColor piece) pos i b) else (takePriority, moveUnchecked pos i b)| i <- [pos3, pos4], (pieceColor <$> accessPos i b) == Just (otherColor $ pieceColor piece)]
+        maybePromote promote from_ to_ b prio = if promote then (prio + promotePriority, promotePawn (pieceColor piece) from_ to_ b) else (prio, moveUnchecked from_ to_ b)
+        movingForward = if freeSquare b pos1 && insideBoard pos1 b then
+                          (if freeSquare b pos2 && canMoveTwice && insideBoard pos2 b then
+                            [second (\x -> x {enPassantable = Just pos2}) (maybePromote isPromote2 pos pos2 b fastPriority) ]
+                          else []) ++ [maybePromote isPromote1 pos pos1 b defaultPriority]
+                        else []
+        takingBoards = [second (if enPassanting then removePiece next_ else id) $ maybePromote isPromote1 pos to_ b takePriority
+                          | offset <- [-1, 1],
+                            let to_ = addPos (offset, direction) pos,
+                            let next_ = addPos (offset, 0) pos,
+                            let enPassanting = enPassantable b == Just next_,
+                            canTake b piece to_ || enPassanting]
 
 possibleMoves :: Board -> Player -> [Board]
-possibleMoves b player = snd <$> (sortOn (Down . fst) $ Map.foldrWithKey (\a b c -> getMoves a b ++ c) [] filteredPieces)
+possibleMoves b player = snd <$> sortOn (Down . fst) (Map.foldrWithKey (\a b c -> getMoves a b ++ c) [] filteredPieces)
   where filteredPieces = Map.filter ((== player) . pieceColor) (board b)
         getMoves pos piece = if pieceType piece == Pawn then possiblePawnMoves pos piece b else possibleQueenMoves pos piece b
 
@@ -155,7 +173,7 @@ alphaBeta board depth ɑ β maximizingPlayer = if depth == 0 then (heuristicScor
         maxFun (x:xs) val ɑ
           | fst newVal >= β = newVal
           | otherwise = maxFun xs newVal (max ɑ $ fst newVal)
-          where newVal = maxBy1 val $ (fst res, x : snd res)
+          where newVal = maxBy1 val $ second (x:) res
                 res = alphaBeta x (depth - 1) ɑ β False
 
         minFun :: [Board] -> (Float, [Board]) -> Float -> (Float, [Board])
@@ -163,17 +181,26 @@ alphaBeta board depth ɑ β maximizingPlayer = if depth == 0 then (heuristicScor
         minFun (x:xs) val β
           | fst newVal <= ɑ = newVal
           | otherwise = minFun xs newVal (min β $ fst newVal)
-          where newVal = minBy1 val $ (fst res, x : snd res)
+          where newVal = minBy1 val $ second (x:) res
                 res = alphaBeta x (depth - 1) ɑ β True
         runFun x = if maximizingPlayer then maxFun x (-infinity, []) ɑ else minFun x (infinity, []) β 
 
 evaluate board depth player = alphaBeta board depth (-infinity) infinity (player == White)
 
+createBoard :: [(Int, Int, Player, PieceType)] -> Maybe Pos -> Board
+createBoard x p = Board { numWhite = numWhite'
+                        , numBlack = numBlack'
+                        , enPassantable = p
+                        , boardSize = (8, 8)
+                        , board = Map.fromList $ (\(x, y, c, t) -> ((x, y), Piece c t)) <$> x
+                        } where numWhite' = length $ filter (\(a, b, c, d) -> c == White) x
+                                numBlack' = length x - numWhite'
 
-board1 = Board { numWhite = 1, numBlack = 1, boardSize = (8, 8), board = Map.fromList [((3, 3), Piece Black Queen) ] }
-board2 = Board { numWhite = 1, numBlack = 1, boardSize = (8, 8), board = Map.fromList [((3, 3), Piece Black Queen), ((6, 3), Piece Black Pawn) ] }
-board3 = Board { numWhite = 1, numBlack = 1, boardSize = (8, 8), board = Map.fromList [((3, 3), Piece Black Queen), ((6, 3), Piece White Pawn) ] }
-board4 = Board { numWhite = 2, numBlack = 2, boardSize = (8, 8), board = Map.fromList [((2, 2), Piece White Pawn), ((3, 3), Piece Black Pawn), ((5, 5), Piece White Pawn), ((6, 6), Piece Black Pawn)] }
-board5 = Board { numWhite = 1, numBlack = 1, boardSize = (8, 8), board = Map.fromList [((1, 6), Piece White Pawn), ((1, 1), Piece Black Pawn)] }
+board1 = createBoard [(3, 3, Black, Queen)] Nothing
+board2 = createBoard [(3, 3, Black, Queen), (6, 3, Black, Pawn) ] Nothing
+board3 = createBoard [(3, 3, Black, Queen), (6, 3, White, Pawn) ] Nothing
+board4 = createBoard [(2, 2, White, Pawn), (3, 3, Black, Pawn), (5, 5, White, Pawn), (6, 6, Black, Pawn)] Nothing
+board5 = createBoard [(1, 6, White, Pawn), (1, 1, Black, Pawn)] Nothing
+board6 = createBoard [(1, 4, White, Pawn), (2, 4, Black, Pawn)] (Just (2, 4))
 
 main = putStrLn "hi"
