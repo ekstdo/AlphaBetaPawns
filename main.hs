@@ -27,15 +27,17 @@ otherColor White = Black
 otherColor Black = White
 
 infinity = 1/0
+veryBig = 10000000
 playerToScore :: Player -> Float
-playerToScore White = infinity -- infinity
-playerToScore Black = -infinity -- negative infinity
+playerToScore White = veryBig
+playerToScore Black = -veryBig
 
 -- Priorities for sorting moves for more efficient alpha beta pruning
 takePriority = 5
 defaultPriority = 1
 fastPriority = 2
 promotePriority = 7
+penaltyStep = 0.01
 
 scorePieceType Queen = 8
 scorePieceType Pawn  = 1
@@ -51,7 +53,7 @@ data Board = Board { board     :: Map Pos Piece
              } deriving (Eq)
 
 instance Show Board where
-  show b = "Board " ++ show (boardSize b) ++ " " ++ show (numWhite b) ++ " vs. " ++ show (numBlack b) ++ ", outside: " ++ show outsidePieces ++ "en passantable: " ++ show (enPassantable b) ++ "\n" ++ intercalate ("\n" ++ rowSeparator ++ "\n") (showRow <$> reverse [0..height- 1])
+  show b = "Board " ++ show (boardSize b) ++ " " ++ show (numWhite b) ++ " vs. " ++ show (numBlack b) ++ ", outside: " ++ show outsidePieces ++ ", en passantable: " ++ show (enPassantable b) ++ "\n" ++ intercalate ("\n" ++ rowSeparator ++ "\n") (showRow <$> reverse [0..height- 1])
           where showRow row = intercalate "│" $ (\i -> maybe " " show $ accessPos (i, row) b) <$> [0..width- 1]
                 rowSeparator = intercalate "┼" $ replicate width "─"
                 width  = fst $ boardSize b
@@ -164,9 +166,9 @@ possibleMoves b player = snd <$> sortOn (Down . fst) (Map.foldrWithKey (\a b c -
 maxBy1 x y = if fst x >= fst y then x else y
 minBy1 x y = if fst x >= fst y then y else x
 
-alphaBeta :: Board -> Int -> Float -> Float -> Bool -> (Float, [Board])
-alphaBeta board depth ɑ β maximizingPlayer = if depth == 0 then (heuristicScore board, [])
-  else maybe (runFun (possibleMoves board player)) (\x -> (playerToScore x, [board])) $ isTerminal board
+alphaBeta :: Board -> Int -> Float -> Float -> Float -> Bool -> (Float, [Board])
+alphaBeta board depth depthPenalty ɑ β maximizingPlayer  = if depth == 0 then (heuristicScore board - depthPenalty, [])
+  else maybe (runFun (possibleMoves board player)) (\x -> (playerToScore x - depthPenalty, [board])) $ isTerminal board
   where player = if maximizingPlayer then White else Black
         maxFun :: [Board] -> (Float, [Board]) -> Float -> (Float, [Board])
         maxFun [] val newAlpha = val
@@ -174,7 +176,7 @@ alphaBeta board depth ɑ β maximizingPlayer = if depth == 0 then (heuristicScor
           | fst newVal >= β = newVal
           | otherwise = maxFun xs newVal (max ɑ $ fst newVal)
           where newVal = maxBy1 val $ second (x:) res
-                res = alphaBeta x (depth - 1) ɑ β False
+                res = alphaBeta x (depth - 1) (depthPenalty + penaltyStep) ɑ β False 
 
         minFun :: [Board] -> (Float, [Board]) -> Float -> (Float, [Board])
         minFun [] val newBeta = val
@@ -182,10 +184,10 @@ alphaBeta board depth ɑ β maximizingPlayer = if depth == 0 then (heuristicScor
           | fst newVal <= ɑ = newVal
           | otherwise = minFun xs newVal (min β $ fst newVal)
           where newVal = minBy1 val $ second (x:) res
-                res = alphaBeta x (depth - 1) ɑ β True
+                res = alphaBeta x (depth - 1) (depthPenalty + penaltyStep) ɑ β True 
         runFun x = if maximizingPlayer then maxFun x (-infinity, []) ɑ else minFun x (infinity, []) β 
 
-evaluate board depth player = alphaBeta board depth (-infinity) infinity (player == White)
+evaluate board depth player = alphaBeta board depth 0.0 (-infinity) infinity (player == White)
 
 createBoard :: [(Int, Int, Player, PieceType)] -> Maybe Pos -> Board
 createBoard x p = Board { numWhite = numWhite'

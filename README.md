@@ -145,5 +145,5 @@ ghci> evaluate board4 7 White
 
 - [x] Promoting pawns
 - [x] En passant
-- [ ] Find the shortest win, when win exists
+- [x] Find the shortest win, when win exists
 - [ ] Some UI
